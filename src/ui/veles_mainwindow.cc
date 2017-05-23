@@ -47,8 +47,6 @@ using util::settings::shortcuts::ShortcutsModel;
 /* VelesMainWindow - Public methods */
 /*****************************************************************************/
 
-QPointer<ConnectionManager> VelesMainWindow::connection_manager_;
-
 VelesMainWindow::VelesMainWindow() : MainWindowWithDetachableDockWidgets(),
     database_dock_widget_(0), log_dock_widget_(0) {
   setAcceptDrops(true);
@@ -58,10 +56,6 @@ VelesMainWindow::VelesMainWindow() : MainWindowWithDetachableDockWidgets(),
 
 void VelesMainWindow::addFile(const QString& path) {
   files_to_upload_once_connected_.push_back(path);
-}
-
-QPointer<ConnectionManager> VelesMainWindow::connectionManager() {
-  return connection_manager_;
 }
 
 /*****************************************************************************/
@@ -95,7 +89,9 @@ void VelesMainWindow::open() {
   }
 }
 
-void VelesMainWindow::newFile() { createFileBlob(""); }
+void VelesMainWindow::newFile() {
+  createFileBlob("");
+}
 
 void VelesMainWindow::about() {
   QMessageBox::about(
@@ -333,13 +329,14 @@ void VelesMainWindow::createDb() {
 #if 0
     database_ = db::create_db();
 #else
-    auto nc = new client::NCWrapper(
+    nc_ = new client::NCWrapper(
         connection_manager_->networkClient(), this);
     database_ = QSharedPointer<client::NCObjectHandle>::create(
-        nc, *data::NodeID::getRootNodeId(), dbif::ObjectType::ROOT);
+        nc_, *data::NodeID::getRootNodeId(), dbif::ObjectType::ROOT);
 #endif
   }
-  auto database_info = new DatabaseInfo(database_);
+  auto database_info = new DatabaseInfo(
+      connection_manager_->resourcesModel());
   DockWidget* dock_widget = new DockWidget;
   dock_widget->setAllowedAreas(Qt::AllDockWidgetAreas);
   dock_widget->setWindowTitle("Database");
@@ -355,11 +352,13 @@ void VelesMainWindow::createDb() {
   }
 
   connect(database_info, &DatabaseInfo::goFile,
-          [this](dbif::ObjectHandle fileBlob, QString fileName) {
-            createHexEditTab(fileName, fileBlob);
-          });
+      [this](QString id, QString file_name) {
+          createHexEditTab(file_name, *data::NodeID::fromHexString(id));
+      });
 
-  connect(database_info, &DatabaseInfo::newFile, [this]() { open(); });
+  connect(database_info, &DatabaseInfo::newFile, [this]() {
+    open();
+  });
 
   database_info->setEnabled(
       connection_manager_->networkClient()->connectionStatus()
@@ -395,38 +394,38 @@ void VelesMainWindow::createFileBlob(QString fileName) {
     data = data::BinData(8, bytes.size(),
                          reinterpret_cast<uint8_t *>(bytes.data()));
   }
-  auto promise =
-      database_->asyncRunMethod<dbif::RootCreateFileBlobFromDataRequest>(
-          this, data, fileName);
-  connect(promise, &dbif::MethodResultPromise::gotResult,
-      [this, fileName](dbif::PMethodReply reply) {
-    createHexEditTab(
-        fileName.isEmpty() ? "untitled" : fileName,
-        reply.dynamicCast<dbif::RootCreateFileBlobFromDataRequest::ReplyType>()
-        ->object);
+  //auto promise =
+  //    database_->asyncRunMethod<dbif::RootCreateFileBlobFromDataRequest>(
+  //    this, data, fileName);
+  data::NodeID id;
+  uint64_t rid = connection_manager_->networkClient()->nodeTree()
+      ->addFileBlob(fileName, data, id);
+  auto promise = QSharedPointer<client::RequestPromise>::create(
+      connection_manager_->networkClient(), rid, nullptr);
+
+  connect(promise.data(), &client::RequestPromise::done, [this, fileName, id]
+      (uint64_t rid) {
+    createHexEditTab(fileName.isEmpty() ? "untitled" : fileName, id);
   });
 
-  connect(promise, &dbif::MethodResultPromise::gotError,
+  /*connect(promise, &dbif::MethodResultPromise::gotError,
           [this, fileName](dbif::PError error) {
             QMessageBox::warning(this, tr("Veles"),
                 tr("Cannot load file %1.").arg(fileName));
-          });
+          });*/
 }
 
-void VelesMainWindow::createHexEditTab(QString fileName,
-    dbif::ObjectHandle fileBlob) {
-  QSharedPointer<FileBlobModel> data_model(
-      new FileBlobModel(fileBlob, {QFileInfo(fileName).fileName()}));
-  QSharedPointer<QItemSelectionModel> selection_model(
-      new QItemSelectionModel(data_model.data()));
+void VelesMainWindow::createHexEditTab(QString file_name, data::NodeID id) {
+  /*QSharedPointer<FileBlobModel> data_model(
+      new FileBlobModel(QSharedPointer<client::NCObjectHandle>::create(
+          nc_, id, dbif::ObjectType::FILE_BLOB),
+          {QFileInfo(file_name).fileName()}));*/
+  auto selection_model = QSharedPointer<QItemSelectionModel>::create(
+      connection_manager_->nodeTreeModel().data());
 
-  //FIXME
-  data::NodeID node = *data::NodeID::getRootNodeId();
-  QSharedPointer<client::NodeTreeModel> node_tree_model;
-
-  NodeWidget* node_widget = new NodeWidget(this, data_model, selection_model,
-      node, node_tree_model);
-  addTab(node_widget, data_model->path().join(" : "), nullptr);
+  NodeWidget* node_widget = new NodeWidget(this, id,
+      connection_manager_->nodeTreeModel(), selection_model);
+  addTab(node_widget, file_name /*data_model->path().join(" : ")*/, nullptr);
 }
 
 void VelesMainWindow::createLogWindow() {

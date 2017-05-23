@@ -129,6 +129,15 @@ uint64_t Node::index() {
   return index_;
 }
 
+std::shared_ptr<data::BinData> Node::binData(std::string name) {
+  auto iter = bin_data_.find(name);
+  if (iter == bin_data_.end()) {
+    return nullptr;
+  }
+
+  return iter->second;
+}
+
 Node::~Node() {}
 
 void Node::addChildLocally(Node* child) {

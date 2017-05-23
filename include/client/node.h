@@ -120,6 +120,8 @@ class Node {
 
   uint64_t index();
 
+  std::shared_ptr<data::BinData> binData(std::string name);
+
  private:
   virtual ~Node();
   void addChildLocally(Node* child);
@@ -137,6 +139,7 @@ class Node {
   Attributes attributes_;
   DataNamesSet data_names_;
   BindataNamesSet bindata_names_;
+  std::unordered_map<std::string, std::shared_ptr<data::BinData>> bin_data_;
 
   uint64_t expected_get_qid_;
   uint64_t last_get_list_qid_;

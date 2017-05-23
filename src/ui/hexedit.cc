@@ -41,8 +41,8 @@ void HexEdit::recalculateValues() {
   charHeight_ = fontMetrics().height();
 
   verticalByteBorderMargin_ = charHeight_ / 5;
-  dataBytesCount_ = dataModel_->binData().size();
-  byteCharsCount_ = (dataModel_->binData().width() + 3) / 4;
+  dataBytesCount_ = data_model_->binData(node_id_)->size();
+  byteCharsCount_ = (data_model_->binData(node_id_)->width() + 3) / 4;
 
   addressBytes_ = 4;
   if (dataBytesCount_ + startOffset_ >= 0x100000000LL) {
@@ -89,11 +89,15 @@ void HexEdit::initParseMenu() {
 
 }
 
-HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
-                 QWidget *parent)
+HexEdit::HexEdit(
+    data::NodeID node_id,
+    QSharedPointer<client::NodeTreeModel> data_model,
+    QSharedPointer<QItemSelectionModel> chunk_selection_model,
+    QWidget* parent)
     : QAbstractScrollArea(parent),
-      dataModel_(dataModel),
-      chunkSelectionModel_(selectionModel),
+      node_id_(node_id),
+      data_model_(data_model),
+      chunk_selection_model_(chunk_selection_model),
       dataBytesCount_(0),
       bytesPerRow_(16),
       autoBytesPerRow_(false),
@@ -106,13 +110,14 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
       cursor_visible_(false) {
   setFont(util::settings::theme::font());
 
-  connect(dataModel_, &FileBlobModel::newBinData,
+  // FIXME
+  /*connect(dataModel_, &FileBlobModel::newBinData,
       this, &HexEdit::newBinData);
   connect(dataModel_, &FileBlobModel::dataChanged,
-      this, &HexEdit::dataChanged);
+      this, &HexEdit::dataChanged);*/
 
-  if (chunkSelectionModel_) {
-    connect(chunkSelectionModel_, &QItemSelectionModel::currentChanged,
+  if (chunk_selection_model_) {
+    connect(chunk_selection_model_.data(), &QItemSelectionModel::currentChanged,
         this, &HexEdit::modelSelectionChanged);
   }
 
@@ -123,7 +128,8 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
   connect(horizontalScrollBar(), &QAbstractSlider::valueChanged, this,
           &HexEdit::recalculateValues);
 
-  createChunkDialog_ = new CreateChunkDialog(dataModel_, chunkSelectionModel_, this);
+  createChunkDialog_ = new CreateChunkDialog(
+      node_id_, data_model_, chunk_selection_model_, this);
 
   createChunkAction_ = ShortcutsModel::getShortcutsModel()->createQAction(
         util::settings::shortcuts::CREATE_CHUNK, this, Qt::WidgetWithChildrenShortcut);
@@ -153,7 +159,7 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
   removeChunkAction_ = ShortcutsModel::getShortcutsModel()->createQAction(
         util::settings::shortcuts::REMOVE_CHUNK, this, Qt::WidgetWithChildrenShortcut);
   auto remove_chunk_lambda = [this]() {
-    auto selectedChunk = chunkSelectionModel_->currentIndex();
+    auto selectedChunk = chunk_selection_model_->currentIndex();
     if (!selectedChunk.isValid()) {
       return;
     }
@@ -164,7 +170,7 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
     if (result != QMessageBox::Yes) {
       return;
     }
-    dataModel_->removeRow(selectedChunk.row(), selectedChunk.parent());
+    data_model_->removeRow(selectedChunk.row(), selectedChunk.parent());
   };
   connect(removeChunkAction_, &QAction::triggered, remove_chunk_lambda);
   removeChunkAction_->setEnabled(false);
@@ -225,10 +231,10 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
 }
 
 QModelIndex HexEdit::selectedChunk() {
-  if (chunkSelectionModel_ == nullptr) {
+  if (chunk_selection_model_ == nullptr) {
     return QModelIndex();
   }
-  return chunkSelectionModel_->currentIndex();
+  return chunk_selection_model_->currentIndex();
 }
 
 QRect HexEdit::bytePosToRect(qint64 pos, bool ascii) {
@@ -327,7 +333,7 @@ HexEdit::WindowArea HexEdit::pointToWindowArea(QPoint pos) {
 }
 
 qint64 HexEdit::byteValue(qint64 pos) {
-  return dataModel_->binData()[pos].element64();
+  return (*data_model_->binData(node_id_))[pos].element64();
 }
 
 qint64 HexEdit::selectionStart() {
@@ -377,11 +383,11 @@ QColor HexEdit::byteBackroundColorFromPos(qint64 pos) {
     return selectionColor;
   }
 
-  auto index = dataModel_->indexFromPos(pos, selectedChunk().parent());
+  auto index = data_model_->indexFromPos(pos, selectedChunk().parent());
 
   if (!index.isValid()) {
-    index = dataModel_->indexFromPos(pos,
-        dataModel_->index(0, 0, QModelIndex()));
+    index = data_model_->indexFromPos(pos,
+        data_model_->index(0, 0, QModelIndex()));
   }
 
   if (index.isValid()) {
@@ -463,7 +469,7 @@ void HexEdit::drawBorder(qint64 start, qint64 size, bool asciiArea,
 void HexEdit::getRangeFromIndex(QModelIndex index, qint64 *start,
                                 qint64 *size) {
   if (index.isValid()) {
-    auto posIndex = dataModel_->index(
+    auto posIndex = data_model_->index(
         index.row(), FileBlobModel::COLUMN_INDEX_POS, index.parent());
     *start = posIndex.data(FileBlobModel::ROLE_BEGIN).toInt();
     *size = posIndex.data(FileBlobModel::ROLE_END).toInt() - *start;
@@ -622,7 +628,7 @@ void HexEdit::contextMenuEvent(QContextMenuEvent *event) {
   bool selectionOrChunkActive = selectionActive || selectedChunk().isValid();
   createChunkAction_->setEnabled(selectionActive);
   createChildChunkAction_->setEnabled(isEditable);
-  removeChunkAction_->setEnabled(dataModel_->isRemovable(selectedChunk()));
+  removeChunkAction_->setEnabled(data_model_->isRemovable(selectedChunk()));
 
   saveSelectionAction_->setEnabled(selectionOrChunkActive);
   parsers_menu_.setEnabled(selectionOrChunkActive);
@@ -809,7 +815,7 @@ void HexEdit::copyToClipboard(util::encoders::IEncoder* enc) {
     }
   }
   auto selectedData =
-      dataModel_->binData().data(selectionStart(), selectionEnd());
+      data_model_->binData(node_id_)->data(selectionStart(), selectionEnd());
   QClipboard *clipboard = QApplication::clipboard();
   // TODO: convert encoders to use BinData
   clipboard->setText(enc->encode(QByteArray(
@@ -817,8 +823,8 @@ void HexEdit::copyToClipboard(util::encoders::IEncoder* enc) {
 }
 
 void HexEdit::setSelectedChunk(QModelIndex newSelectedChunk) {
-  chunkSelectionModel_->clear();
-  chunkSelectionModel_->setCurrentIndex(newSelectedChunk,
+  chunk_selection_model_->clear();
+  chunk_selection_model_->setCurrentIndex(newSelectedChunk,
                                         QItemSelectionModel::SelectCurrent);
   viewport()->update();
 }
@@ -828,7 +834,7 @@ void HexEdit::mousePressEvent(QMouseEvent *event) {
   auto area = pointToWindowArea(event->pos());
 
   auto newSelectedChunk =
-      dataModel_->indexFromPos(clickedByteNum, selectedChunk().parent());
+      data_model_->indexFromPos(clickedByteNum, selectedChunk().parent());
   if (newSelectedChunk.isValid()) {
     setSelectedChunk(newSelectedChunk);
   }
@@ -851,14 +857,14 @@ void HexEdit::mouseDoubleClickEvent(QMouseEvent *event) {
   auto clickedByteNum = pointToBytePos(event->pos());
   // try to find exact match
   auto newSelectedChunk =
-      dataModel_->indexFromPos(clickedByteNum, selectedChunk());
+      data_model_->indexFromPos(clickedByteNum, selectedChunk());
   // if clicked on nonchunk position go back
-  if (!dataModel_->indexFromPos(clickedByteNum, selectedChunk().parent())
+  if (!data_model_->indexFromPos(clickedByteNum, selectedChunk().parent())
            .isValid()) {
     newSelectedChunk = selectedChunk().parent();
   } else if (!newSelectedChunk.isValid()) {
-    // if has childrens select first one
-    if (dataModel_->hasChildren(selectedChunk())) {
+    // if has children select first one
+    if (data_model_->hasChildren(selectedChunk())) {
       newSelectedChunk = selectedChunk().child(0, 0);
     } else {
       newSelectedChunk = selectedChunk();
@@ -944,7 +950,8 @@ void HexEdit::saveSelectionToFile(QString path) {
     size = dataBytesCount_ - byteOffset;
   }
 
-  auto dataToSave = dataModel_->binData().data(byteOffset, byteOffset + size);
+  auto dataToSave = data_model_->binData(node_id_)->data(
+      byteOffset, byteOffset + size);
 
   QFile file(path);
   if (!file.open(QIODevice::WriteOnly)) {
@@ -981,7 +988,7 @@ void HexEdit::parse(QAction *action) {
   if (size == 0) {
     return;
   }
-  dataModel_->parse(parser_id, byteOffset, parent);
+  data_model_->parse(node_id_, parser_id, byteOffset, parent);
 }
 
 void HexEdit::flipCursorVisibility() {

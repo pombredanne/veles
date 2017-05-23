@@ -19,6 +19,8 @@
 #include <cstring>
 #include <list>
 
+#include "network/msgpackwrapper.h"
+#include "network/msgpackobject.h"
 #include "client/node.h"
 #include "client/nodetree.h"
 #include "client/networkclient.h"
@@ -46,8 +48,7 @@ NodeTree::NodeTree(NetworkClient* network_client, QObject* parent)
     message_handlers_["query_error"]
         = &NodeTree::handleQueryErrorMessage;
 
-    Node* root = new Node(this, *data::NodeID::getRootNodeId());
-    nodes_[root->id()] = root;
+    reset();
 
     connect(network_client_, &NetworkClient::messageReceived,
         this, &NodeTree::messageReceived);
@@ -81,6 +82,19 @@ void NodeTree::applyRemoteMessages() {
 bool NodeTree::supportedMessage(msg_ptr msg) {
   auto handler_iter = message_handlers_.find(msg->object_type);
   return handler_iter != message_handlers_.end();
+}
+
+void NodeTree::reset() {
+  remote_messages_.clear();
+  //while (!nodes_.empty()) {
+    // TODO
+  //}
+
+  nodes_.clear();
+  Node* root = new Node(this, *data::NodeID::getRootNodeId());
+  nodes_[root->id()] = root;
+  queries_.clear();
+  subscriptions_.clear();
 }
 
 void NodeTree::messageReceived(msg_ptr msg) {
@@ -122,6 +136,8 @@ void NodeTree::handleGetListReplyMessage(msg_ptr msg) {
       if (n && reply->qid == n->expectedGetListQid()) {
         emit startChildrenModification(node_id.toHexString());
 
+        std::list<Node*> new_children;
+
         if (reply->qid != n->lastGetListQid()) {
           n->setLastGetListQid(reply->qid);
           std::list<Node*> children_list;
@@ -136,13 +152,7 @@ void NodeTree::handleGetListReplyMessage(msg_ptr msg) {
           new_node->setParent(n);
           n->addChildLocally(new_node);
           updateNode(new_child, new_node);
-
-          // FIXME
-          new_node->get(true);
-          new_node->getList(true);
-          printTree();
-
-          // TODO
+          new_children.push_back(new_node);
         }
 
         for (auto removed_child_id : *reply->gone) {
@@ -154,6 +164,15 @@ void NodeTree::handleGetListReplyMessage(msg_ptr msg) {
 
         n->updateChildrenVect();
         emit endChildrenModification(node_id.toHexString());
+
+        for (auto new_node : new_children) {
+          // FIXME
+          new_node->get(true);
+          new_node->getList(true);
+
+        }
+
+        printTree();
       }
     }
   } else {
@@ -301,6 +320,119 @@ uint64_t NodeTree::deleteNode(data::NodeID id) {
   auto msg = std::make_shared<proto::MsgDelete>(
       rid,
       std::make_shared<data::NodeID>(id));
+  network_client_->sendMessage(msg);
+
+  return rid;
+}
+
+uint64_t NodeTree::addChunk(data::NodeID parent_id, QString name, QString type,
+    QString comment, int64_t start, int64_t end) {
+  uint64_t rid = network_client_->nextQid();
+  auto new_id = std::make_shared<data::NodeID>();
+
+  auto tags = std::make_shared<std::unordered_set<std::shared_ptr<
+      std::string>>>();
+  tags->insert(std::make_shared<std::string>("chunk"));
+  tags->insert(std::make_shared<std::string>("chunk.stored"));
+  auto attr = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<messages::MsgpackObject>>>();
+  attr->insert(std::pair<std::string, std::shared_ptr<
+      messages::MsgpackObject>>("name",
+      std::make_shared<messages::MsgpackObject>(name.toStdString())));
+  attr->insert(std::pair<std::string, std::shared_ptr<
+      messages::MsgpackObject>>("comment",
+      std::make_shared<messages::MsgpackObject>(comment.toStdString())));
+  attr->insert(std::pair<std::string, std::shared_ptr<
+      messages::MsgpackObject>>("type",
+      std::make_shared<messages::MsgpackObject>(type.toStdString())));
+
+  auto data = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<messages::MsgpackObject>>>();
+
+  auto bindata = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<std::vector<uint8_t>>>>();
+
+  auto triggers = std::make_shared<std::unordered_set<
+      std::shared_ptr<std::string>>>();
+
+  auto operation = std::make_shared<proto::OperationCreate>(
+      new_id,
+      std::make_shared<data::NodeID>(parent_id),
+      std::pair<bool, int64_t>(true, start),
+      std::pair<bool, int64_t>(true, end),
+      tags,
+      attr,
+      data,
+      bindata,
+      triggers
+      );
+
+  auto operations = std::make_shared<std::vector<std::shared_ptr<
+      proto::Operation>>>();
+  operations->push_back(operation);
+
+  auto msg = std::make_shared<proto::MsgTransaction>(
+      rid,
+      std::make_shared<std::vector<std::shared_ptr<proto::Check>>>(),
+      operations);
+  network_client_->sendMessage(msg);
+
+  return rid;
+}
+
+uint64_t NodeTree::addFileBlob(
+    QString path, const data::BinData& file_data, data::NodeID id) {
+  auto rid = network_client_->nextQid();
+  auto new_id = std::make_shared<data::NodeID>(id);
+
+  auto tags = std::make_shared<std::unordered_set<std::shared_ptr<
+      std::string>>>();
+  tags->insert(std::make_shared<std::string>("blob"));
+  tags->insert(std::make_shared<std::string>("blob.file"));
+  tags->insert(std::make_shared<std::string>("blob.stored"));
+  auto attr = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<messages::MsgpackObject>>>();
+  attr->insert(std::pair<std::string, std::shared_ptr<
+      messages::MsgpackObject>>("name",
+      std::make_shared<messages::MsgpackObject>(path.toStdString())));
+  attr->insert(std::pair<std::string, std::shared_ptr<
+      messages::MsgpackObject>>("path",
+      std::make_shared<messages::MsgpackObject>(path.toStdString())));
+
+  auto data = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<messages::MsgpackObject>>>();
+
+  auto bindata = std::make_shared<std::unordered_map<
+      std::string,std::shared_ptr<std::vector<uint8_t>>>>();
+  auto data_vec = std::make_shared<std::vector<uint8_t>>();
+  data_vec->assign(file_data.rawData(),
+      file_data.rawData() + file_data.octets());
+  bindata->insert(std::pair<std::string, std::shared_ptr<std::vector<uint8_t>>>
+      ("data", data_vec));
+
+  auto triggers = std::make_shared<std::unordered_set<
+      std::shared_ptr<std::string>>>();
+
+  auto operation = std::make_shared<proto::OperationCreate>(
+      new_id,
+      data::NodeID::getRootNodeId(),
+      std::pair<bool, int64_t>(true, 0),
+      std::pair<bool, int64_t>(true, file_data.octets()),
+      tags,
+      attr,
+      data,
+      bindata,
+      triggers
+      );
+
+  auto operations = std::make_shared<std::vector<std::shared_ptr<
+      proto::Operation>>>();
+  operations->push_back(operation);
+
+  auto msg = std::make_shared<proto::MsgTransaction>(
+      rid,
+      std::make_shared<std::vector<std::shared_ptr<proto::Check>>>(),
+      operations);
   network_client_->sendMessage(msg);
 
   return rid;

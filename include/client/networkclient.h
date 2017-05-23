@@ -64,7 +64,9 @@ class NetworkClient : public QObject {
       const QByteArray& authentication_key,
       bool quit_on_close);
   void disconnect();
-  std::unique_ptr<NodeTree> const& nodeTree();
+  // FIXME
+  //QSharedPointer<NodeTree> const& nodeTree();
+  NodeTree* nodeTree();
   uint64_t nextQid();
 
   QString serverHostName();
@@ -111,7 +113,9 @@ public slots:
 
  private:
   QTcpSocket* client_socket_;
-  std::unique_ptr<NodeTree> node_tree_;
+  // FIXME
+  // QSharedPointer<NodeTree> node_tree_;
+  NodeTree* node_tree_;
   ConnectionStatus status_;
 
   QString server_name_;
@@ -130,6 +134,28 @@ public slots:
   std::unordered_map<std::string, MessageHandler> message_handlers_;
 
   QTextStream* output_stream_;
+  uint64_t qid_;
+};
+
+/*****************************************************************************/
+/* RequestPromise */
+/*****************************************************************************/
+
+class RequestPromise : public QObject {
+ Q_OBJECT
+
+ public:
+  RequestPromise(NetworkClient* network_client, uint64_t qid,
+      QObject* parent = nullptr);
+
+ signals:
+  void done(uint64_t qid);
+  void failed(uint64_t qid);
+
+ public slots:
+  void messageReceived(msg_ptr message);
+
+ private:
   uint64_t qid_;
 };
 

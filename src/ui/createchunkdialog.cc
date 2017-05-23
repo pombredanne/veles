@@ -20,9 +20,11 @@
 namespace veles {
 namespace ui {
 
-CreateChunkDialog::CreateChunkDialog(FileBlobModel *chunksModel,
-                                     QItemSelectionModel *selectionModel,
-                                     QWidget *parent)
+CreateChunkDialog::CreateChunkDialog(
+    data::NodeID blob_id,
+    QSharedPointer<client::NodeTreeModel> chunksModel,
+    QSharedPointer<QItemSelectionModel> selectionModel,
+    QWidget* parent)
     : QDialog(parent),
       ui(new Ui::CreateChunkDialog),
       chunksModel_(chunksModel),
@@ -43,7 +45,8 @@ void CreateChunkDialog::init() {
   ui->typeBox->setCurrentIndex(0);
   displayPath();
   updateBinDataSize();
-  connect(chunksModel_, &FileBlobModel::newBinData, this, &CreateChunkDialog::updateBinDataSize);
+  //FIXME
+  //connect(chunksModel_, &FileBlobModel::newBinData, this, &CreateChunkDialog::updateBinDataSize);
 }
 
 QModelIndex CreateChunkDialog::parentChunk() {
@@ -86,8 +89,9 @@ void CreateChunkDialog::accept() {
 
 void CreateChunkDialog::updateBinDataSize() {
   ui->beginSpinBox->setMaximum(
-      static_cast<int>(chunksModel_->binData().size()));
-  ui->endSpinBox->setMaximum(static_cast<int>(chunksModel_->binData().size()));
+      static_cast<int>(chunksModel_->binData(blob_id_)->size()));
+  ui->endSpinBox->setMaximum(static_cast<int>(
+      chunksModel_->binData(blob_id_)->size()));
 }
 
 void CreateChunkDialog::setRange(uint64_t begin, uint64_t end) {

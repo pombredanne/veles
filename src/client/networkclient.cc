@@ -23,6 +23,9 @@
 #include <QHostAddress>
 
 #include "proto/exceptions.h"
+#include "network/msgpackwrapper.h"
+#include "network/msgpackobject.h"
+
 #include "client/node.h"
 #include "client/nodetree.h"
 #include "client/networkclient.h"
@@ -52,7 +55,7 @@ QString NetworkClient::connStatusStr(ConnectionStatus status) {
 }
 
 NetworkClient::NetworkClient(QObject* parent) : QObject(parent),
-    client_socket_(nullptr), node_tree_(nullptr),
+    client_socket_(nullptr),
     status_(ConnectionStatus::NotConnected),
     server_name_("127.0.0.1"), server_port_(3135),
     client_interface_name_("127.0.0.1"),
@@ -61,6 +64,9 @@ NetworkClient::NetworkClient(QObject* parent) : QObject(parent),
     client_type_(""), authentication_key_(""), quit_on_close_(false),
     output_stream_(nullptr), qid_(0) {
   registerMessageHandlers();
+  // FIXME
+  //node_tree_ = QSharedPointer<NodeTree>::create(this, this);
+  node_tree_ = new NodeTree(this, this);
 }
 
 NetworkClient::~NetworkClient() {
@@ -145,7 +151,9 @@ void NetworkClient::disconnect() {
   }
 }
 
-std::unique_ptr<NodeTree> const& NetworkClient::nodeTree() {
+//QSharedPointer<NodeTree> const& NetworkClient::nodeTree() {
+NodeTree* NetworkClient::nodeTree() {
+  // FIXME
   return node_tree_;
 }
 
@@ -407,17 +415,13 @@ void NetworkClient::socketConnected() {
 
   client_socket_->write(authentication_key_);
   sendMsgConnect();
-  node_tree_ = std::unique_ptr<NodeTree>(new NodeTree(this, this));
+  node_tree_->reset();
 }
 
 void NetworkClient::socketDisconnected() {
   setConnectionStatus(ConnectionStatus::NotConnected);
   if(output()) {
     *output() << "NetworkClient: TCP socket disconnected." << endl;
-  }
-
-  if (node_tree_) {
-    node_tree_.reset();
   }
 
   if (client_socket_) {
@@ -461,6 +465,51 @@ void NetworkClient::socketError(QAbstractSocket::SocketError socketError) {
   if (output() && client_socket_) {
     *output() << "NetworkClient: Socket error - "
         << client_socket_->errorString() << endl;
+  }
+}
+
+/*****************************************************************************/
+/* RequestPromise */
+/*****************************************************************************/
+
+RequestPromise::RequestPromise(
+    NetworkClient* network_client, uint64_t qid, QObject* parent)
+    : QObject(parent), qid_(qid) {
+  connect(network_client, &NetworkClient::messageReceived,
+      this, &RequestPromise::messageReceived);
+}
+
+void RequestPromise::messageReceived(msg_ptr message) {
+  if (message->object_type == "request_ack") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgRequestAck>(message);
+    if(reply && reply->rid == qid_) {
+      emit done(qid_);
+    }
+  } else if (message->object_type == "query_error") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgQueryError>(message);
+    if(reply && reply->qid == qid_) {
+      emit failed(qid_);
+    }
+  } else if (message->object_type == "get_reply") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgGetReply>(message);
+    if(reply && reply->qid == qid_) {
+      emit done(qid_);
+    }
+  } else if (message->object_type == "get_list_reply") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgGetListReply>(message);
+    if(reply && reply->qid == qid_) {
+      emit done(qid_);
+    }
+  } else if (message->object_type == "get_data_reply") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgGetDataReply>(message);
+    if(reply && reply->qid == qid_) {
+      emit done(qid_);
+    }
+  } else if (message->object_type == "get_bindata_reply") {
+    auto reply = std::dynamic_pointer_cast<proto::MsgGetBinDataReply>(message);
+    if(reply && reply->qid == qid_) {
+      emit done(qid_);
+    }
   }
 }
 

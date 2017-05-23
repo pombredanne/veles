@@ -48,6 +48,7 @@ class NodeTree : public QObject {
   bool supportedMessage(msg_ptr msg);
 
  public slots:
+  void reset();
   void messageReceived(msg_ptr msg);
   void handleMessage(msg_ptr msg);
   void updateConnectionStatus(NetworkClient::ConnectionStatus
@@ -75,6 +76,10 @@ class NodeTree : public QObject {
   uint64_t get(data::NodeID id, bool sub);
   uint64_t getList(data::NodeID id, bool sub);
   uint64_t deleteNode(data::NodeID id);
+  uint64_t addChunk(data::NodeID parent_id, QString name, QString type,
+      QString comment, int64_t start, int64_t end);
+  uint64_t addFileBlob(
+      QString path, const data::BinData& file_data, data::NodeID id);
 
   void updateNode(std::shared_ptr<proto::Node> src_node, Node* dst_node);
 
